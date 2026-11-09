@@ -1,0 +1,98 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function for authenticated session
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Super admin verification helper (admin@librarypro.com)
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'admin@librarypro.com' ||
+        exists(/databases/$(database)/documents/super_admins/$(request.auth.uid))
+      );
+    }
+
+    // Registered library tenants
+    match /libraries/{libraryId} {
+      allow read, write: if true;
+    }
+
+    // Super Admin registry
+    match /super_admins/{adminId} {
+      allow read, write: if true;
+    }
+
+    // Books catalog collection
+    match /books/{bookId} {
+      allow read, write: if true;
+    }
+
+    // Members & patrons collection
+    match /members/{memberId} {
+      allow read, write: if true;
+    }
+
+    // Active & returned loan records
+    match /loans/{loanId} {
+      allow read, write: if true;
+    }
+
+    // Fines, penalties, and payment receipts
+    match /fines/{fineId} {
+      allow read, write: if true;
+    }
+
+    // Book reservations & hold queue
+    match /reservations/{reservationId} {
+      allow read, write: if true;
+    }
+
+    // Staff user accounts
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    // Library system settings
+    match /settings/{settingId} {
+      allow read, write: if true;
+    }
+
+    // System activity & audit logs
+    match /activity_logs/{logId} {
+      allow read, write: if true;
+    }
+
+    // Reading room / Study library collections
+    match /rr_students/{studentId} {
+      allow read, write: if true;
+    }
+
+    match /rr_seats/{seatId} {
+      allow read, write: if true;
+    }
+
+    match /rr_plans/{planId} {
+      allow read, write: if true;
+    }
+
+    match /rr_payments/{paymentId} {
+      allow read, write: if true;
+    }
+
+    match /rr_attendance/{attendanceId} {
+      allow read, write: if true;
+    }
+
+    // Connectivity verification collection
+    match /system_test/{testId} {
+      allow read, write: if true;
+    }
+
+    // Default deny for unmapped root collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

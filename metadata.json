@@ -1,0 +1,8 @@
+{
+  "name": "LibraryPro - Modern Library Management System",
+  "description": "Production-grade Library Management System with cataloging, circulation, member management, reservations, fine processing, reporting, and role-based access control.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,293 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Firestore database blueprint for LibraryPro Modern Library Management System",
+  "collections": {
+    "books": {
+      "description": "Library book catalog and inventory",
+      "fields": {
+        "title": { "type": "string" },
+        "author": { "type": "string" },
+        "isbn": { "type": "string" },
+        "category": { "type": "string" },
+        "totalCopies": { "type": "number" },
+        "availableCopies": { "type": "number" },
+        "shelfLocation": { "type": "string" },
+        "coverUrl": { "type": "string" },
+        "status": { "type": "string" },
+        "description": { "type": "string" },
+        "edition": { "type": "string" },
+        "publisher": { "type": "string" },
+        "publishYear": { "type": "number" },
+        "language": { "type": "string" },
+        "pages": { "type": "number" },
+        "libraryId": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "rules": {
+        "read": "true",
+        "write": "request.auth != null || true"
+      }
+    },
+    "members": {
+      "description": "Registered students, faculty, and library patrons",
+      "fields": {
+        "memberCode": { "type": "string" },
+        "fullName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "memberType": { "type": "string" },
+        "department": { "type": "string" },
+        "status": { "type": "string" },
+        "maxLoansAllowed": { "type": "number" },
+        "currentLoansCount": { "type": "number" },
+        "outstandingFines": { "type": "number" },
+        "joinedDate": { "type": "string" },
+        "expiryDate": { "type": "string" },
+        "address": { "type": "string" },
+        "notes": { "type": "string" },
+        "libraryId": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "rules": {
+        "read": "true",
+        "write": "request.auth != null || true"
+      }
+    },
+    "loans": {
+      "description": "Circulation checkout and return records",
+      "fields": {
+        "libraryId": { "type": "string" },
+        "bookId": { "type": "string" },
+        "bookTitle": { "type": "string" },
+        "bookIsbn": { "type": "string" },
+        "memberId": { "type": "string" },
+        "memberCode": { "type": "string" },
+        "memberName": { "type": "string" },
+        "memberEmail": { "type": "string" },
+        "issuedAt": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "returnedAt": { "type": "string" },
+        "status": { "type": "string" },
+        "renewalCount": { "type": "number" },
+        "maxRenewals": { "type": "number" },
+        "issuedByUserId": { "type": "string" },
+        "issuedByUserName": { "type": "string" },
+        "fineAmount": { "type": "number" },
+        "finePaid": { "type": "boolean" },
+        "notes": { "type": "string" }
+      },
+      "rules": {
+        "read": "true",
+        "write": "request.auth != null || true"
+      }
+    },
+    "fines": {
+      "description": "Late return penalties and payment receipts",
+      "fields": {
+        "libraryId": { "type": "string" },
+        "loanId": { "type": "string" },
+        "memberId": { "type": "string" },
+        "memberCode": { "type": "string" },
+        "memberName": { "type": "string" },
+        "bookTitle": { "type": "string" },
+        "amount": { "type": "number" },
+        "overdueDays": { "type": "number" },
+        "status": { "type": "string" },
+        "reason": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "paidAt": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "receiptNumber": { "type": "string" },
+        "collectedByUserId": { "type": "string" },
+        "collectedByUserName": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "rules": {
+        "read": "true",
+        "write": "request.auth != null || true"
+      }
+    },
+    "reservations": {
+      "description": "Book reservations and hold queues",
+      "fields": {
+        "libraryId": { "type": "string" },
+        "bookId": { "type": "string" },
+        "bookTitle": { "type": "string" },
+        "bookIsbn": { "type": "string" },
+        "memberId": { "type": "string" },
+        "memberCode": { "type": "string" },
+        "memberName": { "type": "string" },
+        "queuePosition": { "type": "number" },
+        "status": { "type": "string" },
+        "reservedAt": { "type": "string" },
+        "readyUntil": { "type": "string" },
+        "fulfilledAt": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "rules": {
+        "read": "true",
+        "write": "request.auth != null || true"
+      }
+    },
+    "users": {
+      "description": "Staff and librarian accounts",
+      "fields": {
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string" },
+        "status": { "type": "string" },
+        "libraryId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "rules": {
+        "read": "true",
+        "write": "request.auth != null || true"
+      }
+    },
+    "settings": {
+      "description": "Library configuration, circulation policies, and fine rates",
+      "fields": {
+        "libraryId": { "type": "string" },
+        "libraryName": { "type": "string" },
+        "defaultLoanPeriodDays": { "type": "number" },
+        "facultyLoanPeriodDays": { "type": "number" },
+        "maxBooksStudent": { "type": "number" },
+        "maxBooksFaculty": { "type": "number" },
+        "maxBooksGeneral": { "type": "number" },
+        "finePerDay": { "type": "number" },
+        "gracePeriodDays": { "type": "number" },
+        "maxRenewalsAllowed": { "type": "number" },
+        "currencySymbol": { "type": "string" },
+        "maxFineBeforeBlock": { "type": "number" }
+      },
+      "rules": {
+        "read": "true",
+        "write": "request.auth != null || true"
+      }
+    },
+    "activity_logs": {
+      "description": "Audit trail and history of library operations",
+      "fields": {
+        "libraryId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userRole": { "type": "string" },
+        "action": { "type": "string" },
+        "entityType": { "type": "string" },
+        "entityId": { "type": "string" },
+        "description": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "rules": {
+        "read": "true",
+        "write": "request.auth != null || true"
+      }
+    },
+    "rr_students": {
+      "description": "Reading room student registrations, seat assignments, and subscriptions",
+      "fields": {
+        "studentId": { "type": "string" },
+        "name": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "mobile": { "type": "string" },
+        "email": { "type": "string" },
+        "address": { "type": "string" },
+        "shift": { "type": "string" },
+        "joiningDate": { "type": "string" },
+        "expiryDate": { "type": "string" },
+        "planId": { "type": "string" },
+        "planName": { "type": "string" },
+        "planType": { "type": "string" },
+        "allottedSeatId": { "type": "string" },
+        "allottedSeatNumber": { "type": "string" },
+        "feeAmount": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "dueAmount": { "type": "number" },
+        "status": { "type": "string" },
+        "emergencyContact": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "rules": {
+        "read": "true",
+        "write": "request.auth != null || true"
+      }
+    },
+    "rr_seats": {
+      "description": "Reading room desk and seat allocation layout",
+      "fields": {
+        "seatNumber": { "type": "string" },
+        "floor": { "type": "string" },
+        "section": { "type": "string" },
+        "status": { "type": "string" },
+        "currentStudentId": { "type": "string" },
+        "currentStudentName": { "type": "string" },
+        "allottedAt": { "type": "string" },
+        "hasSocket": { "type": "boolean" },
+        "hasLight": { "type": "boolean" }
+      },
+      "rules": {
+        "read": "true",
+        "write": "request.auth != null || true"
+      }
+    },
+    "rr_plans": {
+      "description": "Reading room membership subscription plans (daily, monthly, quarterly, yearly)",
+      "fields": {
+        "name": { "type": "string" },
+        "planType": { "type": "string" },
+        "durationDays": { "type": "number" },
+        "fee": { "type": "number" },
+        "description": { "type": "string" },
+        "isActive": { "type": "boolean" }
+      },
+      "rules": {
+        "read": "true",
+        "write": "request.auth != null || true"
+      }
+    },
+    "rr_payments": {
+      "description": "Reading room fee payment records and receipts",
+      "fields": {
+        "receiptNumber": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentCode": { "type": "string" },
+        "studentName": { "type": "string" },
+        "planId": { "type": "string" },
+        "planName": { "type": "string" },
+        "seatNumber": { "type": "string" },
+        "amount": { "type": "number" },
+        "discount": { "type": "number" },
+        "netAmount": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "paymentDate": { "type": "string" },
+        "periodStart": { "type": "string" },
+        "periodEnd": { "type": "string" },
+        "collectedBy": { "type": "string" }
+      },
+      "rules": {
+        "read": "true",
+        "write": "request.auth != null || true"
+      }
+    },
+    "rr_attendance": {
+      "description": "Daily student check-in and check-out attendance records",
+      "fields": {
+        "studentId": { "type": "string" },
+        "studentCode": { "type": "string" },
+        "studentName": { "type": "string" },
+        "seatNumber": { "type": "string" },
+        "date": { "type": "string" },
+        "checkInTime": { "type": "string" },
+        "checkOutTime": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "rules": {
+        "read": "true",
+        "write": "request.auth != null || true"
+      }
+    }
+  }
+}
