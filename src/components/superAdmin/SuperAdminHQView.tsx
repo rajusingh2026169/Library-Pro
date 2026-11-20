@@ -13,7 +13,7 @@ import {
   Users,
   BookOpen,
   Armchair,
-  DollarSign,
+  IndianRupee,
   Calendar,
   Phone,
   Mail,
@@ -65,6 +65,7 @@ export const SuperAdminHQView: React.FC = () => {
     ownerName: '',
     ownerEmail: '',
     phone: '',
+    password: '',
     plan: 'pro',
     city: '',
     state: '',
@@ -112,6 +113,7 @@ export const SuperAdminHQView: React.FC = () => {
           ownerName: '',
           ownerEmail: '',
           phone: '',
+          password: '',
           plan: 'pro',
           city: '',
           state: '',
@@ -582,9 +584,9 @@ export const SuperAdminHQView: React.FC = () => {
                     onChange={(e) => setNewLibForm({ ...newLibForm, plan: e.target.value as LibraryPlan })}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs focus:outline-hidden focus:border-indigo-500"
                   >
-                    <option value="starter">Starter (15 Seats, 5k Books)</option>
-                    <option value="pro">Professional (30 Seats, 20k Books)</option>
-                    <option value="enterprise">Enterprise (60 Seats, 50k Books)</option>
+                    <option value="starter">Starter (105+ Seats, 5k Books)</option>
+                    <option value="pro">Professional (120+ Seats, 20k Books)</option>
+                    <option value="enterprise">Enterprise (150+ Seats, 50k Books)</option>
                   </select>
                 </div>
               </div>
@@ -645,6 +647,21 @@ export const SuperAdminHQView: React.FC = () => {
                     className="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs placeholder-slate-500 focus:outline-hidden focus:border-indigo-500"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Owner Login Password *
+                </label>
+                <input
+                  type="text"
+                  required
+                  minLength={6}
+                  value={newLibForm.password || ''}
+                  onChange={(e) => setNewLibForm({ ...newLibForm, password: e.target.value })}
+                  placeholder="Min 6 characters for owner sign-in"
+                  className="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs placeholder-slate-500 focus:outline-hidden focus:border-indigo-500"
+                />
               </div>
 
               <div className="pt-3 flex items-center justify-end gap-2.5">
@@ -846,9 +863,9 @@ export const SuperAdminHQView: React.FC = () => {
                   </label>
                   <input
                     type="number"
-                    min={5}
-                    max={200}
-                    value={editingLibrary.maxSeats || 30}
+                    min={1}
+                    max={2000}
+                    value={editingLibrary.maxSeats || 120}
                     onChange={(e) => setEditingLibrary({ ...editingLibrary, maxSeats: Number(e.target.value) })}
                     className="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs"
                   />

@@ -19,7 +19,14 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
-import { firebaseConfig } from '../../services/firebase';
+import {
+  firebaseConfig,
+  firestore,
+  collection,
+  getDocs,
+  query,
+  where,
+} from '../../services/firebase';
 import { LibraryPlan } from '../../types';
 
 interface LoginPageProps {
@@ -30,12 +37,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
   const {
     signInWithEmail,
     signUpWithEmail,
+    commitAuthUser,
     signInWithGoogle,
     sendPasswordReset,
     getFormattedErrorMessage,
   } = useAuth();
 
-  const { registerLibrary } = useTenant();
+  const { registerLibrary, libraries } = useTenant();
 
   const [mode, setMode] = useState<'signin' | 'register_library' | 'forgot'>('signin');
   const [email, setEmail] = useState('');
@@ -66,7 +74,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
     e.preventDefault();
     clearMessages();
 
-    if (!email.trim() || !password) {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !password) {
       setErrorMessage(
         isHindi
           ? 'कृपया ईमेल और पासवर्ड दोनों दर्ज करें।'
@@ -78,21 +87,65 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
     setIsLoading(true);
     try {
       try {
-        await signInWithEmail(email, password);
+        await signInWithEmail(normalizedEmail, password);
       } catch (signInErr: any) {
-        // If the user doesn't exist yet (e.g. initial super admin first-time sign-in), auto-create in Firebase Auth
-        if (
+        const isCredentialFailure =
           signInErr?.code === 'auth/user-not-found' ||
-          signInErr?.code === 'auth/invalid-credential' && email.trim().toLowerCase() === 'admin@librarypro.com'
-        ) {
-          try {
-            await signUpWithEmail(email.trim(), password, 'Super Administrator');
-          } catch (signUpErr) {
-            // If sign up fails because user actually exists, rethrow original sign-in error
+          signInErr?.code === 'auth/invalid-credential';
+
+        if (!isCredentialFailure) {
+          throw signInErr;
+        }
+
+        // Case 1: Super Admin first-time sign-in with designated credentials
+        if (normalizedEmail === 'admin@librarypro.com') {
+          if (password === 'Admin@2027') {
+            try {
+              await signUpWithEmail(normalizedEmail, password, 'Super Administrator');
+            } catch (signUpErr: any) {
+              if (signUpErr?.code === 'auth/email-already-in-use') {
+                throw new Error(
+                  isHindi
+                    ? 'Super Admin (admin@librarypro.com) खाता पहले से किसी अन्य पासवर्ड के साथ मौजूद है। कृपया "पासवर्ड भूल गए?" से पासवर्ड रीसेट करें।'
+                    : 'The Super Admin (admin@librarypro.com) account already exists with a different password. Please use "Forgot password?" to reset it.'
+                );
+              }
+              throw signInErr;
+            }
+          } else {
             throw signInErr;
           }
         } else {
-          throw signInErr;
+          // Case 2: Library owner provisioned from Super Admin HQ (exists in Firestore 'users' with savedPassword)
+          let provisionedSuccess = false;
+          try {
+            const q = query(
+              collection(firestore, 'users'),
+              where('email', '==', normalizedEmail)
+            );
+            const snap = await getDocs(q);
+            const matchedDoc = snap.docs
+              .map((d) => d.data() as any)
+              .find((u) => u?.savedPassword && u.savedPassword === password);
+
+            if (matchedDoc) {
+              await signUpWithEmail(
+                normalizedEmail,
+                password,
+                matchedDoc.displayName || normalizedEmail.split('@')[0]
+              );
+              provisionedSuccess = true;
+            }
+          } catch (provisionErr: any) {
+            // If Firebase Auth already has this email with another password, fall back to invalid-credential message
+            if (provisionErr?.code !== 'auth/email-already-in-use') {
+              throw provisionErr;
+            }
+          }
+
+          if (!provisionedSuccess) {
+            throw signInErr;
+          }
         }
       }
       onSuccess?.();
@@ -107,11 +160,23 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
     e.preventDefault();
     clearMessages();
 
-    if (!libName.trim() || !libCode.trim() || !libOwnerName.trim() || !libEmail.trim() || !password) {
+    const normalizedOwnerEmail = libEmail.trim().toLowerCase();
+    const normalizedCode = libCode.trim().toUpperCase();
+
+    if (!libName.trim() || !normalizedCode || !libOwnerName.trim() || !normalizedOwnerEmail || !password) {
       setErrorMessage(
         isHindi
           ? 'कृपया सभी आवश्यक फ़ील्ड (पुस्तकालय नाम, कोड, संचालक नाम, ईमेल, पासवर्ड) भरें।'
           : 'Please fill in all required library registration fields.'
+      );
+      return;
+    }
+
+    if (normalizedOwnerEmail === 'admin@librarypro.com') {
+      setErrorMessage(
+        isHindi
+          ? 'यह ईमेल सुपर एडमिन के लिए आरक्षित है। कृपया अपनी लाइब्रेरी का ईमेल उपयोग करें।'
+          : 'This email is reserved for the platform Super Admin. Please use your own library email.'
       );
       return;
     }
@@ -125,14 +190,45 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
       return;
     }
 
+    const duplicateEmail = libraries.some(
+      (l) => l.ownerEmail?.toLowerCase() === normalizedOwnerEmail
+    );
+    if (duplicateEmail) {
+      setErrorMessage(
+        isHindi
+          ? 'इस ईमेल से एक पुस्तकालय पहले से पंजीकृत है। कृपया लॉगिन करें।'
+          : 'A library is already registered with this email. Please sign in instead.'
+      );
+      return;
+    }
+
+    const duplicateCode = libraries.some(
+      (l) => l.code?.toUpperCase() === normalizedCode
+    );
+    if (duplicateCode) {
+      setErrorMessage(
+        isHindi
+          ? `ब्रांच कोड "${normalizedCode}" पहले से उपयोग में है। कृपया कोई अन्य कोड चुनें।`
+          : `Branch code "${normalizedCode}" is already in use. Please choose a different code.`
+      );
+      return;
+    }
+
     setIsLoading(true);
+    let authCreated = false;
     try {
-      // 1. Provision new library tenant in Firestore
+      // 1. Create Firebase Auth account first while deferring UI redirect until tenant is provisioned
+      await signUpWithEmail(normalizedOwnerEmail, password, libOwnerName.trim(), {
+        deferStateUpdate: true,
+      });
+      authCreated = true;
+
+      // 2. Provision new library tenant in Firestore
       const regRes = await registerLibrary({
         name: libName.trim(),
-        code: libCode.trim().toUpperCase(),
+        code: normalizedCode,
         ownerName: libOwnerName.trim(),
-        ownerEmail: libEmail.trim().toLowerCase(),
+        ownerEmail: normalizedOwnerEmail,
         phone: libPhone.trim(),
         plan: libPlan,
         city: libCity.trim(),
@@ -143,16 +239,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
         throw new Error(regRes.error || 'Failed to provision library record');
       }
 
-      // 2. Create user in Firebase Auth
-      await signUpWithEmail(libEmail.trim(), password, libOwnerName.trim());
-
       setSuccessMessage(
         isHindi
           ? `पुस्तकालय "${libName}" सफलतापूर्वक पंजीकृत हो गया! डैशबोर्ड लोड हो रहा है...`
           : `Library "${libName}" registered successfully! Redirecting to dashboard...`
       );
+
+      // 3. Commit authenticated user state so AuthenticatedApp routes straight into the new Library Dashboard
+      commitAuthUser();
       onSuccess?.();
     } catch (err: any) {
+      if (authCreated) {
+        commitAuthUser();
+      }
       setErrorMessage(getFormattedErrorMessage(err, isHindi));
     } finally {
       setIsLoading(false);
@@ -495,9 +594,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
                       onChange={(e) => setLibPlan(e.target.value as LibraryPlan)}
                       className="w-full px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs focus:outline-hidden focus:border-indigo-500"
                     >
-                      <option value="starter">Starter (15 Seats)</option>
-                      <option value="pro">Pro (30 Seats)</option>
-                      <option value="enterprise">Enterprise (60 Seats)</option>
+                      <option value="starter">Starter (105+ Seats)</option>
+                      <option value="pro">Pro (120+ Seats)</option>
+                      <option value="enterprise">Enterprise (150+ Seats)</option>
                     </select>
                   </div>
                 </div>

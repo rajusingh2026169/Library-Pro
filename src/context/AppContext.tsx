@@ -25,6 +25,7 @@ import {
   updateDoc,
   onSnapshot,
   setDoc,
+  sanitizeForFirestore,
 } from '../services/firebase';
 import {
   seedInitialDataIfEmpty,
@@ -283,9 +284,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       doc(firestore, 'settings', settingsDocId),
       (docSnap) => {
         if (docSnap.exists()) {
-          setSettings(docSnap.data() as LibrarySettings);
+          const loaded = docSnap.data() as LibrarySettings;
+          const needsInrNormalized =
+            !loaded.currencySymbol ||
+            loaded.currencySymbol === '$' ||
+            loaded.currency === 'USD';
+          setSettings(
+            needsInrNormalized
+              ? { ...loaded, currency: 'INR', currencySymbol: '₹' }
+              : loaded
+          );
         } else if (currentLibrary) {
-          // Adapt default settings from current library
+          // Adapt default settings from current library with INR
           setSettings((prev) => ({
             ...prev,
             libraryId: currentLibrary.id,
@@ -293,6 +303,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             branchCode: currentLibrary.code,
             email: currentLibrary.ownerEmail,
             phone: currentLibrary.phone,
+            currency: !prev.currency || prev.currency === 'USD' ? 'INR' : prev.currency,
+            currencySymbol: !prev.currencySymbol || prev.currencySymbol === '$' ? '₹' : prev.currencySymbol,
           }));
         }
       },
@@ -332,7 +344,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       unsubLogs();
       unsubUsers();
     };
-  }, []);
+  }, [currentLibraryId]);
 
   // Sync to local cache storage on updates as fallback
   useEffect(() => {
@@ -1140,9 +1152,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       addToast({ type: 'error', title: 'Unauthorized', message: 'Only Super Admins can update system settings.' });
       return;
     }
-    const updated = { ...settings, ...newSettings };
+    const updated = { ...settings, ...newSettings, libraryId: currentLibraryId };
     setSettings(updated);
-    setDoc(doc(firestore, 'settings', 'main_config'), updated).catch(console.error);
+    StorageService.saveSettings(updated);
+    const settingsDocId = currentLibraryId === 'lib_main' ? 'main_config' : `settings_${currentLibraryId}`;
+    setDoc(doc(firestore, 'settings', settingsDocId), sanitizeForFirestore(updated), { merge: true }).catch(console.error);
     logActivity('SETTINGS_UPDATED', 'SETTINGS', settings.id, 'Updated library configuration and circulation policies');
     addToast({ type: 'success', title: 'Settings Saved', message: 'Library parameters updated.' });
   };

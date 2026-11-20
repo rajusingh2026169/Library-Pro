@@ -4,7 +4,7 @@ import { useApp } from '../../context/AppContext';
 import { CirculationService } from '../../services/circulationService';
 import { Loan, PaymentMethod, FineRecord } from '../../types';
 import { Badge } from '../common/Badge';
-import { AlertTriangle, CheckCircle2, CornerDownLeft, Receipt, DollarSign, QrCode } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, CornerDownLeft, Receipt, IndianRupee, QrCode } from 'lucide-react';
 import { QRScannerModal, ScannedResult } from '../common/QRScannerModal';
 
 interface ReturnBookModalProps {

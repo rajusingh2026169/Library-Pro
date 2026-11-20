@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Armchair,
   CheckCircle,
@@ -6,6 +6,7 @@ import {
   Zap,
   Lightbulb,
   Plus,
+  Minus,
   UserCheck,
   UserX,
   Phone,
@@ -14,6 +15,10 @@ import {
   Eye,
   Calendar,
   X,
+  Sliders,
+  Trash2,
+  Search,
+  Loader2,
 } from 'lucide-react';
 import { useReadingRoom } from '../../context/ReadingRoomContext';
 import { useApp } from '../../context/AppContext';
@@ -30,13 +35,29 @@ export const SeatLayoutView: React.FC<SeatLayoutViewProps> = ({
   onOpenStudentIdCard,
   onOpenCollectFee,
 }) => {
-  const { seats, students, allotSeat, vacateSeat, setSeatStatus, addSeat } = useReadingRoom();
-  const { settings, addToast } = useApp();
+  const {
+    seats,
+    students,
+    allotSeat,
+    vacateSeat,
+    setSeatStatus,
+    addSeat,
+    deleteSeat,
+    adjustSeatCount,
+  } = useReadingRoom();
+  const { settings, addToast, language } = useApp();
+  const isHindi = language === 'hi';
 
   const [selectedSeat, setSelectedSeat] = useState<RRSeat | null>(null);
   const [floorFilter, setFloorFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [seatSearch, setSeatSearch] = useState<string>('');
   const [isAddSeatOpen, setIsAddSeatOpen] = useState(false);
+  const [isAdjustSeatsOpen, setIsAdjustSeatsOpen] = useState(false);
+  const [targetSeatCount, setTargetSeatCount] = useState<number>(seats.length || 120);
+  const [adjustFloor, setAdjustFloor] = useState('Ground Floor');
+  const [adjustSection, setAdjustSection] = useState('AC Main Hall');
+  const [isAdjusting, setIsAdjusting] = useState(false);
   const [newSeatNumber, setNewSeatNumber] = useState('');
   const [newFloor, setNewFloor] = useState('Ground Floor');
   const [newSection, setNewSection] = useState('AC Main Hall');
@@ -46,10 +67,25 @@ export const SeatLayoutView: React.FC<SeatLayoutViewProps> = ({
   // Unallotted active students
   const unallottedStudents = students.filter((s) => !s.allottedSeatId && s.status === 'active');
 
+  // Unique floors available
+  const availableFloors = useMemo(() => {
+    const set = new Set<string>(['Ground Floor', '1st Floor', '2nd Floor']);
+    seats.forEach((s) => {
+      if (s.floor) set.add(s.floor);
+    });
+    return Array.from(set);
+  }, [seats]);
+
   // Filter seats
   const filteredSeats = seats.filter((s) => {
     if (floorFilter !== 'all' && s.floor !== floorFilter) return false;
     if (statusFilter !== 'all' && s.status !== statusFilter) return false;
+    if (seatSearch.trim()) {
+      const q = seatSearch.trim().toLowerCase();
+      const matchSeat = s.seatNumber.toLowerCase().includes(q);
+      const matchStudent = (s.currentStudentName || '').toLowerCase().includes(q);
+      if (!matchSeat && !matchStudent) return false;
+    }
     return true;
   });
 
@@ -107,6 +143,53 @@ export const SeatLayoutView: React.FC<SeatLayoutViewProps> = ({
       setNewSeatNumber('');
     } else {
       addToast({ type: 'error', title: 'Failed to Add Seat', message: res.error });
+    }
+  };
+
+  const handleOpenAdjustModal = () => {
+    setTargetSeatCount(totalSeats);
+    setIsAdjustSeatsOpen(true);
+  };
+
+  const handleApplySeatCount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsAdjusting(true);
+    const res = await adjustSeatCount(targetSeatCount, {
+      floor: adjustFloor,
+      section: adjustSection,
+    });
+    setIsAdjusting(false);
+    if (res.success) {
+      const msg =
+        res.added && res.added > 0
+          ? isHindi
+            ? `${res.added} नई सीटें जोड़ी गईं (कुल: ${targetSeatCount})।`
+            : `Added ${res.added} seats (Total: ${targetSeatCount}).`
+          : res.removed && res.removed > 0
+          ? isHindi
+            ? `${res.removed} खाली सीटें हटाई गईं (कुल: ${targetSeatCount})।`
+            : `Removed ${res.removed} unoccupied seats (Total: ${targetSeatCount}).`
+          : isHindi
+          ? 'सीट संख्या अपडेट हो गई।'
+          : 'Seat count updated.';
+      addToast({ type: 'success', title: isHindi ? 'सीट क्षमता अपडेट' : 'Seats Updated', message: msg });
+      setIsAdjustSeatsOpen(false);
+    } else {
+      addToast({ type: 'error', title: 'Could Not Update Seats', message: res.error });
+    }
+  };
+
+  const handleDeleteSingleSeat = async (seat: RRSeat) => {
+    const res = await deleteSeat(seat.id);
+    if (res.success) {
+      addToast({
+        type: 'info',
+        title: isHindi ? 'सीट हटाई गई' : 'Seat Removed',
+        message: `Removed seat ${seat.seatNumber}.`,
+      });
+      setSelectedSeat(null);
+    } else {
+      addToast({ type: 'error', title: 'Cannot Remove Seat', message: res.error });
     }
   };
 
@@ -202,18 +285,43 @@ export const SeatLayoutView: React.FC<SeatLayoutViewProps> = ({
             className="text-xs font-semibold px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
           >
             <option value="all">All Floors & Halls</option>
-            <option value="Ground Floor">Ground Floor (AC Hall)</option>
-            <option value="1st Floor">1st Floor (Silent Zone)</option>
+            {availableFloors.map((fl) => (
+              <option key={fl} value={fl}>
+                {fl}
+              </option>
+            ))}
           </select>
+
+          {/* Search seat or student */}
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={seatSearch}
+              onChange={(e) => setSeatSearch(e.target.value)}
+              placeholder={isHindi ? 'सीट नं. या छात्र खोजें...' : 'Search seat or student...'}
+              className="pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-300 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-44"
+            />
+          </div>
         </div>
 
-        <button
-          onClick={() => setIsAddSeatOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition shadow-sm cursor-pointer whitespace-nowrap active:scale-98"
-        >
-          <Plus className="w-4 h-4" />
-          Add Study Desk
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleOpenAdjustModal}
+            className="flex items-center gap-2 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition shadow-sm cursor-pointer whitespace-nowrap active:scale-98"
+          >
+            <Sliders className="w-4 h-4 text-indigo-300" />
+            {isHindi ? `सीटें कम/ज्यादा करें (${totalSeats})` : `Adjust Total Seats (${totalSeats})`}
+          </button>
+
+          <button
+            onClick={() => setIsAddSeatOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition shadow-sm cursor-pointer whitespace-nowrap active:scale-98"
+          >
+            <Plus className="w-4 h-4" />
+            {isHindi ? 'नई सीट जोड़ें' : 'Add Study Desk'}
+          </button>
+        </div>
       </div>
 
       {/* Interactive Seat Grid */}
@@ -221,7 +329,7 @@ export const SeatLayoutView: React.FC<SeatLayoutViewProps> = ({
         <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
           <div>
             <h3 className="font-extrabold text-base text-slate-900 tracking-tight">
-              Floor Plan & Desk Allocation Layout
+              Floor Plan & Desk Allocation Layout ({filteredSeats.length} / {totalSeats} Desks)
             </h3>
             <p className="text-xs text-slate-500">
               Click on any seat to view occupant profile, allot to student, or vacate desk.
@@ -245,7 +353,7 @@ export const SeatLayoutView: React.FC<SeatLayoutViewProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3 sm:gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-2.5 sm:gap-3">
           {filteredSeats.map((seat) => {
             const isOccupied = seat.status === 'occupied';
             const isAvailable = seat.status === 'available';
@@ -485,6 +593,14 @@ export const SeatLayoutView: React.FC<SeatLayoutViewProps> = ({
                       >
                         Mark on Hold / Reserved
                       </button>
+
+                      <button
+                        onClick={() => handleDeleteSingleSeat(selectedSeat)}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2 border border-rose-200 hover:bg-rose-50 text-rose-600 text-xs font-semibold rounded-xl transition cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        {isHindi ? `सीट ${selectedSeat.seatNumber} हटाएं` : `Remove Desk ${selectedSeat.seatNumber}`}
+                      </button>
                     </div>
                   ) : (
                     <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
@@ -604,6 +720,177 @@ export const SeatLayoutView: React.FC<SeatLayoutViewProps> = ({
                   className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-xs"
                 >
                   Add Desk
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Adjust Total Reading Room Seats Modal */}
+      {isAdjustSeatsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-scale-in">
+            <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-indigo-400" />
+                <h4 className="font-extrabold text-sm">
+                  {isHindi ? 'रीडिंग रूम सीटें कम या ज्यादा करें' : 'Adjust Reading Room Seat Capacity'}
+                </h4>
+              </div>
+              <button
+                onClick={() => setIsAdjustSeatsOpen(false)}
+                className="text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleApplySeatCount} className="p-5 space-y-4 text-xs">
+              <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200 text-center">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Current</span>
+                  <span className="text-base font-black text-slate-900">{totalSeats}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-rose-500 block">Occupied</span>
+                  <span className="text-base font-black text-rose-600">{occupiedCount}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-emerald-600 block">Removable</span>
+                  <span className="text-base font-black text-emerald-600">{totalSeats - occupiedCount}</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">
+                  {isHindi ? 'नई कुल सीट संख्या (Total Seats) *' : 'New Total Seat Count *'}
+                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTargetSeatCount((prev) => Math.max(occupiedCount || 1, prev - 10))}
+                    className="px-2.5 py-2 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 font-bold text-slate-700 cursor-pointer"
+                    title="Decrease by 10"
+                  >
+                    -10
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTargetSeatCount((prev) => Math.max(occupiedCount || 1, prev - 1))}
+                    className="p-2 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer"
+                    title="Decrease by 1"
+                  >
+                    <Minus className="w-4 h-4" />
+                  </button>
+                  <input
+                    type="number"
+                    min={Math.max(1, occupiedCount)}
+                    max={2000}
+                    required
+                    value={targetSeatCount}
+                    onChange={(e) => setTargetSeatCount(Number(e.target.value))}
+                    className="flex-1 text-center px-3 py-2 rounded-xl border border-slate-300 text-base font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setTargetSeatCount((prev) => Math.min(2000, prev + 1))}
+                    className="p-2 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer"
+                    title="Increase by 1"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTargetSeatCount((prev) => Math.min(2000, prev + 10))}
+                    className="px-2.5 py-2 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 font-bold text-slate-700 cursor-pointer"
+                    title="Increase by 10"
+                  >
+                    +10
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {[50, 100, 120, 150, 200, 300].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setTargetSeatCount(preset)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                        targetSeatCount === preset
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {preset} Seats
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {targetSeatCount > totalSeats && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Floor for New Seats</label>
+                    <select
+                      value={adjustFloor}
+                      onChange={(e) => setAdjustFloor(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 font-medium"
+                    >
+                      <option value="Ground Floor">Ground Floor</option>
+                      <option value="1st Floor">1st Floor</option>
+                      <option value="2nd Floor">2nd Floor</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Section / Hall</label>
+                    <input
+                      type="text"
+                      value={adjustSection}
+                      onChange={(e) => setAdjustSection(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 font-medium"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div
+                className={`p-3 rounded-xl border text-xs font-semibold ${
+                  targetSeatCount > totalSeats
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                    : targetSeatCount < totalSeats
+                    ? 'bg-amber-50 border-amber-200 text-amber-800'
+                    : 'bg-slate-50 border-slate-200 text-slate-600'
+                }`}
+              >
+                {targetSeatCount > totalSeats
+                  ? isHindi
+                    ? `${targetSeatCount - totalSeats} नई सीटें जोड़ी जाएंगी (कुल ${targetSeatCount} सीटें)।`
+                    : `Will add ${targetSeatCount - totalSeats} new study desks (Total: ${targetSeatCount}).`
+                  : targetSeatCount < totalSeats
+                  ? isHindi
+                    ? `${totalSeats - targetSeatCount} खाली सीटें हटाई जाएंगी (छात्रों वाली सीट सुरक्षित रहेंगी)।`
+                    : `Will remove ${totalSeats - targetSeatCount} unoccupied desks from the highest numbers (occupied seats stay intact).`
+                  : isHindi
+                  ? 'सीट संख्या वर्तमान के बराबर है।'
+                  : 'Target matches current seat count.'}
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAdjustSeatsOpen(false)}
+                  className="px-4 py-2 border border-slate-300 rounded-xl hover:bg-slate-50 font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isAdjusting || targetSeatCount === totalSeats}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold rounded-xl shadow-xs cursor-pointer"
+                >
+                  {isAdjusting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  {isHindi ? 'सीट संख्या सेव करें' : 'Apply Seat Count'}
                 </button>
               </div>
             </form>

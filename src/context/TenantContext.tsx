@@ -9,6 +9,7 @@ import {
   getDocs,
   query,
   where,
+  writeBatch,
 } from 'firebase/firestore';
 import { firestore, sanitizeForFirestore } from '../services/firebase';
 import { useAuth } from './AuthContext';
@@ -192,6 +193,9 @@ export const TenantProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       const slug = payload.code.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
       const libraryId = `lib_${slug}_${Date.now()}`;
 
+      const initialSeatCount =
+        payload.plan === 'enterprise' ? 150 : payload.plan === 'pro' ? 120 : 105;
+
       const newLib: LibraryTenant = {
         id: libraryId,
         name: payload.name.trim(),
@@ -204,8 +208,9 @@ export const TenantProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         state: payload.state || '',
         plan: payload.plan || 'pro',
         status: 'active',
-        maxSeats: payload.plan === 'enterprise' ? 60 : payload.plan === 'pro' ? 30 : 15,
+        maxSeats: 1000,
         maxBooks: payload.plan === 'enterprise' ? 50000 : payload.plan === 'pro' ? 20000 : 5000,
+        seatCapacityConfigured: true,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -241,21 +246,26 @@ export const TenantProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       };
       await setDoc(doc(firestore, 'settings', `settings_${libraryId}`), sanitizeForFirestore(defaultSettings));
 
-      // 3. Seed initial 15 seats for the new library's reading room
-      for (let i = 1; i <= 15; i++) {
+      // 3. Seed initial 100+ seats for the new library's reading room in a single batch
+      const seatBatch = writeBatch(firestore);
+      for (let i = 1; i <= initialSeatCount; i++) {
         const seatNo = `S-${i.toString().padStart(2, '0')}`;
+        const floor = i <= 60 ? 'Ground Floor' : i <= 110 ? '1st Floor' : '2nd Floor';
+        const section =
+          i <= 60 ? 'AC Main Hall' : i <= 110 ? 'Silent Reading Zone' : 'Exam Prep Wing';
         const seatDoc = {
           id: `seat_${libraryId}_${i}`,
           libraryId,
           seatNumber: seatNo,
-          floor: 'Ground Floor',
-          section: i <= 8 ? 'Quiet Study Hall' : 'Digital Lab & AC Zone',
+          floor,
+          section,
           status: 'available',
           hasSocket: true,
           hasLight: true,
         };
-        await setDoc(doc(firestore, 'rr_seats', seatDoc.id), sanitizeForFirestore(seatDoc));
+        seatBatch.set(doc(firestore, 'rr_seats', seatDoc.id), sanitizeForFirestore(seatDoc));
       }
+      await seatBatch.commit();
 
       // 4. Seed standard membership plans for the new library
       const plans = [

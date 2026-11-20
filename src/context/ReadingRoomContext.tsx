@@ -8,6 +8,7 @@ import {
   ReadingRoomMetrics,
   ShiftType,
 } from '../types/readingRoom';
+import { writeBatch } from 'firebase/firestore';
 import {
   firestore,
   collection,
@@ -61,6 +62,11 @@ interface ReadingRoomContextType {
   vacateSeat: (seatId: string) => Promise<{ success: boolean; error?: string }>;
   setSeatStatus: (seatId: string, status: RRSeat['status']) => Promise<{ success: boolean; error?: string }>;
   addSeat: (seatData: Omit<RRSeat, 'id'>) => Promise<{ success: boolean; error?: string }>;
+  deleteSeat: (seatId: string) => Promise<{ success: boolean; error?: string }>;
+  adjustSeatCount: (
+    targetCount: number,
+    options?: { floor?: string; section?: string }
+  ) => Promise<{ success: boolean; added?: number; removed?: number; error?: string }>;
 
   // Plan Actions
   savePlan: (plan: Omit<RRPlan, 'id'> & { id?: string }) => Promise<{ success: boolean; error?: string }>;
@@ -131,26 +137,32 @@ const DEFAULT_PLANS: RRPlan[] = [
   },
 ];
 
-// Initial clean available seats (30 seats)
-const DEFAULT_SEATS: RRSeat[] = Array.from({ length: 30 }, (_, i) => {
-  const num = (i + 1).toString().padStart(2, '0');
-  const isHall1 = i < 18;
-  return {
-    id: `seat_${num}`,
-    seatNumber: `S-${num}`,
-    floor: isHall1 ? 'Ground Floor' : '1st Floor',
-    section: isHall1 ? 'AC Main Hall' : 'Silent Reading Zone',
-    status: 'available',
-    currentStudentId: undefined,
-    currentStudentName: undefined,
-    allottedAt: undefined,
-    hasSocket: true,
-    hasLight: true,
-  };
-});
+// Initial clean available seats (120 seats — 100+ study desks by default)
+const DEFAULT_SEAT_COUNT = 120;
+const buildDefaultSeats = (libraryId: string, count: number = DEFAULT_SEAT_COUNT): RRSeat[] =>
+  Array.from({ length: count }, (_, i) => {
+    const idx = i + 1;
+    const num = idx.toString().padStart(2, '0');
+    const floor = idx <= 60 ? 'Ground Floor' : idx <= 110 ? '1st Floor' : '2nd Floor';
+    const section =
+      idx <= 60 ? 'AC Main Hall' : idx <= 110 ? 'Silent Reading Zone' : 'Exam Prep Wing';
+    return {
+      id: `seat_${libraryId}_${idx}`,
+      libraryId,
+      seatNumber: `S-${num}`,
+      floor,
+      section,
+      status: 'available',
+      currentStudentId: undefined,
+      currentStudentName: undefined,
+      allottedAt: undefined,
+      hasSocket: true,
+      hasLight: true,
+    };
+  });
 
 export const ReadingRoomProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const { currentLibraryId } = useTenant();
+  const { currentLibraryId, currentLibrary, updateLibraryDetails } = useTenant();
 
   const [students, setStudents] = useState<RRStudent[]>([]);
   const [seats, setSeats] = useState<RRSeat[]>([]);
@@ -159,23 +171,82 @@ export const ReadingRoomProvider: React.FC<{ children: ReactNode }> = ({ childre
   const [attendance, setAttendance] = useState<RRAttendance[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Initialize plans and seats if empty in Firestore for this library tenant
+  // Initialize plans and 100+ seats if empty (or legacy <=30 unconfigured) in Firestore for this library tenant
   useEffect(() => {
+    const libId = currentLibraryId || 'lib_main';
     const initAndSyncFirestore = async () => {
       try {
-        // 1. Plans: ensure standard plans exist
+        // 1. Plans: ensure standard plans exist for this tenant
         const plansSnap = await getDocs(collection(firestore, 'rr_plans'));
-        if (plansSnap.empty) {
+        const tenantPlans = plansSnap.docs.filter(
+          (d) => (d.data().libraryId || 'lib_main') === libId
+        );
+        if (tenantPlans.length === 0) {
+          const planBatch = writeBatch(firestore);
           for (const plan of DEFAULT_PLANS) {
-            await setDoc(doc(firestore, 'rr_plans', plan.id), sanitizeForFirestore({ ...plan, libraryId: currentLibraryId || 'lib_main' }));
+            const tenantPlanId = libId === 'lib_main' ? plan.id : `${plan.id}_${libId}`;
+            planBatch.set(
+              doc(firestore, 'rr_plans', tenantPlanId),
+              sanitizeForFirestore({ ...plan, id: tenantPlanId, libraryId: libId })
+            );
           }
+          await planBatch.commit();
         }
 
-        // 2. Seats: ensure initial seats exist
+        // 2. Seats: ensure 100+ seats exist for this tenant unless tenant already configured custom seat count
         const seatsSnap = await getDocs(collection(firestore, 'rr_seats'));
-        if (seatsSnap.empty) {
-          for (const seat of DEFAULT_SEATS) {
-            await setDoc(doc(firestore, 'rr_seats', seat.id), sanitizeForFirestore({ ...seat, libraryId: currentLibraryId || 'lib_main' }));
+        const tenantSeatDocs = seatsSnap.docs.filter(
+          (d) => (d.data().libraryId || 'lib_main') === libId
+        );
+        const alreadyConfigured =
+          Boolean(currentLibrary?.seatCapacityConfigured) ||
+          localStorage.getItem(`librarypro_seats_configured_${libId}`) === '1';
+
+        if (tenantSeatDocs.length === 0) {
+          const defaultSeats = buildDefaultSeats(libId, DEFAULT_SEAT_COUNT);
+          const seatBatch = writeBatch(firestore);
+          for (const seat of defaultSeats) {
+            seatBatch.set(doc(firestore, 'rr_seats', seat.id), sanitizeForFirestore(seat));
+          }
+          await seatBatch.commit();
+          localStorage.setItem(`librarypro_seats_configured_${libId}`, '1');
+        } else if (tenantSeatDocs.length <= 30 && !alreadyConfigured) {
+          // One-time seamless upgrade of legacy 15/30-seat tenant up to 120 seats without disturbing occupied desks
+          const existingNums = new Set<number>();
+          tenantSeatDocs.forEach((d) => {
+            const match = String(d.data().seatNumber || '').match(/\d+/);
+            if (match) existingNums.add(parseInt(match[0], 10));
+          });
+          let maxNum = existingNums.size > 0 ? Math.max(...Array.from(existingNums)) : tenantSeatDocs.length;
+          const needed = DEFAULT_SEAT_COUNT - tenantSeatDocs.length;
+          if (needed > 0) {
+            const expandBatch = writeBatch(firestore);
+            for (let i = 1; i <= needed; i++) {
+              const numVal = maxNum + i;
+              const seatNo = `S-${numVal.toString().padStart(2, '0')}`;
+              const floor = numVal <= 60 ? 'Ground Floor' : numVal <= 110 ? '1st Floor' : '2nd Floor';
+              const section =
+                numVal <= 60 ? 'AC Main Hall' : numVal <= 110 ? 'Silent Reading Zone' : 'Exam Prep Wing';
+              const newSeat: RRSeat = {
+                id: `seat_${libId}_${numVal}_${Date.now().toString(36).slice(-3)}`,
+                libraryId: libId,
+                seatNumber: seatNo,
+                floor,
+                section,
+                status: 'available',
+                hasSocket: true,
+                hasLight: true,
+              };
+              expandBatch.set(doc(firestore, 'rr_seats', newSeat.id), sanitizeForFirestore(newSeat));
+            }
+            await expandBatch.commit();
+          }
+          localStorage.setItem(`librarypro_seats_configured_${libId}`, '1');
+          if (currentLibrary) {
+            updateLibraryDetails(currentLibrary.id, {
+              seatCapacityConfigured: true,
+              maxSeats: Math.max(currentLibrary.maxSeats || 0, 1000),
+            }).catch(() => {});
           }
         }
       } catch (err) {
@@ -647,13 +718,22 @@ export const ReadingRoomProvider: React.FC<{ children: ReactNode }> = ({ childre
   // 7. Add New Seat
   const addSeat = async (seatData: Omit<RRSeat, 'id'>) => {
     try {
+      const libId = currentLibraryId || 'lib_main';
       if (seats.some((s) => s.seatNumber.toLowerCase() === seatData.seatNumber.toLowerCase())) {
         return { success: false, error: `Seat "${seatData.seatNumber}" already exists.` };
       }
-      const newId = `seat_${Date.now()}`;
-      const newSeat: RRSeat = { ...seatData, id: newId };
-      await setDoc(doc(firestore, 'rr_seats', newId), newSeat);
-      setSeats((prev) => [...prev, newSeat]);
+      const newId = `seat_${libId}_${Date.now()}`;
+      const newSeat: RRSeat = { ...seatData, id: newId, libraryId: libId };
+      await setDoc(doc(firestore, 'rr_seats', newId), sanitizeForFirestore(newSeat));
+      setSeats((prev) =>
+        [...prev, newSeat].sort((a, b) =>
+          a.seatNumber.localeCompare(b.seatNumber, undefined, { numeric: true })
+        )
+      );
+      localStorage.setItem(`librarypro_seats_configured_${libId}`, '1');
+      if (currentLibrary && !currentLibrary.seatCapacityConfigured) {
+        updateLibraryDetails(currentLibrary.id, { seatCapacityConfigured: true }).catch(() => {});
+      }
       return { success: true };
     } catch (err: any) {
       console.error('Error adding seat:', err);
@@ -661,12 +741,154 @@ export const ReadingRoomProvider: React.FC<{ children: ReactNode }> = ({ childre
     }
   };
 
+  // 7b. Delete Single Unoccupied Seat
+  const deleteSeat = async (seatId: string) => {
+    try {
+      const libId = currentLibraryId || 'lib_main';
+      const targetSeat = seats.find((s) => s.id === seatId);
+      if (!targetSeat) return { success: false, error: 'Seat not found.' };
+      if (targetSeat.status === 'occupied' || targetSeat.currentStudentId) {
+        return {
+          success: false,
+          error: `Seat ${targetSeat.seatNumber} is currently occupied by ${targetSeat.currentStudentName || 'a student'}. Vacate it first.`,
+        };
+      }
+      await deleteDoc(doc(firestore, 'rr_seats', seatId));
+      setSeats((prev) => prev.filter((s) => s.id !== seatId));
+      localStorage.setItem(`librarypro_seats_configured_${libId}`, '1');
+      if (currentLibrary && !currentLibrary.seatCapacityConfigured) {
+        updateLibraryDetails(currentLibrary.id, { seatCapacityConfigured: true }).catch(() => {});
+      }
+      return { success: true };
+    } catch (err: any) {
+      console.error('Error deleting seat:', err);
+      return { success: false, error: err?.message || 'Failed to delete seat.' };
+    }
+  };
+
+  // 7c. Adjust Total Reading Room Seats (Increase or Decrease freely by Library)
+  const adjustSeatCount = async (
+    targetCount: number,
+    options?: { floor?: string; section?: string }
+  ) => {
+    try {
+      const libId = currentLibraryId || 'lib_main';
+      const cleanTarget = Math.floor(Number(targetCount));
+      if (!Number.isFinite(cleanTarget) || cleanTarget < 1 || cleanTarget > 2000) {
+        return { success: false, error: 'Seat count must be between 1 and 2,000.' };
+      }
+
+      const currentCount = seats.length;
+      if (cleanTarget === currentCount) {
+        return { success: true, added: 0, removed: 0 };
+      }
+
+      if (cleanTarget > currentCount) {
+        const diff = cleanTarget - currentCount;
+        let maxNum = 0;
+        seats.forEach((s) => {
+          const match = String(s.seatNumber || '').match(/\d+/);
+          if (match) {
+            const n = parseInt(match[0], 10);
+            if (n > maxNum) maxNum = n;
+          }
+        });
+        if (maxNum < currentCount) maxNum = currentCount;
+
+        const newSeats: RRSeat[] = [];
+        for (let i = 1; i <= diff; i++) {
+          const numVal = maxNum + i;
+          const seatNo = `S-${numVal.toString().padStart(2, '0')}`;
+          const defaultFloor =
+            options?.floor || (numVal <= 60 ? 'Ground Floor' : numVal <= 110 ? '1st Floor' : '2nd Floor');
+          const defaultSection =
+            options?.section ||
+            (numVal <= 60 ? 'AC Main Hall' : numVal <= 110 ? 'Silent Reading Zone' : 'Exam Prep Wing');
+
+          newSeats.push({
+            id: `seat_${libId}_${Date.now()}_${i}`,
+            libraryId: libId,
+            seatNumber: seatNo,
+            floor: defaultFloor,
+            section: defaultSection,
+            status: 'available',
+            hasSocket: true,
+            hasLight: true,
+          });
+        }
+
+        // Write in chunks of 400 (Firestore batch limit is 500)
+        for (let idx = 0; idx < newSeats.length; idx += 400) {
+          const chunk = newSeats.slice(idx, idx + 400);
+          const batch = writeBatch(firestore);
+          for (const seat of chunk) {
+            batch.set(doc(firestore, 'rr_seats', seat.id), sanitizeForFirestore(seat));
+          }
+          await batch.commit();
+        }
+
+        setSeats((prev) =>
+          [...prev, ...newSeats].sort((a, b) =>
+            a.seatNumber.localeCompare(b.seatNumber, undefined, { numeric: true })
+          )
+        );
+        localStorage.setItem(`librarypro_seats_configured_${libId}`, '1');
+        if (currentLibrary) {
+          updateLibraryDetails(currentLibrary.id, {
+            seatCapacityConfigured: true,
+            maxSeats: Math.max(currentLibrary.maxSeats || 0, cleanTarget),
+          }).catch(() => {});
+        }
+        return { success: true, added: diff, removed: 0 };
+      } else {
+        // Decrease seats: remove unoccupied seats from highest number downward
+        const toRemoveCount = currentCount - cleanTarget;
+        const unoccupiedDesc = [...seats]
+          .filter((s) => s.status !== 'occupied' && !s.currentStudentId)
+          .sort((a, b) => b.seatNumber.localeCompare(a.seatNumber, undefined, { numeric: true }));
+
+        if (unoccupiedDesc.length < toRemoveCount) {
+          const occupiedCount = currentCount - unoccupiedDesc.length;
+          return {
+            success: false,
+            error: `Cannot reduce to ${cleanTarget} seats because ${occupiedCount} seats are currently occupied by students. Vacate seats first.`,
+          };
+        }
+
+        const targetsToDelete = unoccupiedDesc.slice(0, toRemoveCount);
+        const deleteIds = new Set(targetsToDelete.map((s) => s.id));
+
+        for (let idx = 0; idx < targetsToDelete.length; idx += 400) {
+          const chunk = targetsToDelete.slice(idx, idx + 400);
+          const batch = writeBatch(firestore);
+          for (const seat of chunk) {
+            batch.delete(doc(firestore, 'rr_seats', seat.id));
+          }
+          await batch.commit();
+        }
+
+        setSeats((prev) => prev.filter((s) => !deleteIds.has(s.id)));
+        localStorage.setItem(`librarypro_seats_configured_${libId}`, '1');
+        if (currentLibrary) {
+          updateLibraryDetails(currentLibrary.id, {
+            seatCapacityConfigured: true,
+          }).catch(() => {});
+        }
+        return { success: true, added: 0, removed: targetsToDelete.length };
+      }
+    } catch (err: any) {
+      console.error('Error adjusting seat count:', err);
+      return { success: false, error: err?.message || 'Failed to update seat count.' };
+    }
+  };
+
   // 8. Save Plan
   const savePlan = async (plan: Omit<RRPlan, 'id'> & { id?: string }) => {
     try {
-      const planId = plan.id || `plan_${Date.now()}`;
-      const fullPlan: RRPlan = { ...plan, id: planId };
-      await setDoc(doc(firestore, 'rr_plans', planId), fullPlan);
+      const libId = currentLibraryId || 'lib_main';
+      const planId = plan.id || `plan_${libId}_${Date.now()}`;
+      const fullPlan: RRPlan = { ...plan, id: planId, libraryId: libId };
+      await setDoc(doc(firestore, 'rr_plans', planId), sanitizeForFirestore(fullPlan));
       setPlans((prev) => {
         const idx = prev.findIndex((p) => p.id === planId);
         if (idx >= 0) {
@@ -851,9 +1073,10 @@ export const ReadingRoomProvider: React.FC<{ children: ReactNode }> = ({ childre
   // 13. Manual Attendance Record
   const markAttendance = async (record: Omit<RRAttendance, 'id'>) => {
     try {
+      const libId = currentLibraryId || 'lib_main';
       const attId = `att_rr_${Date.now()}`;
-      const fullRecord: RRAttendance = { ...record, id: attId };
-      await setDoc(doc(firestore, 'rr_attendance', attId), fullRecord);
+      const fullRecord: RRAttendance = { ...record, id: attId, libraryId: libId };
+      await setDoc(doc(firestore, 'rr_attendance', attId), sanitizeForFirestore(fullRecord));
       setAttendance((prev) => [fullRecord, ...prev]);
       return { success: true };
     } catch (err: any) {
@@ -879,6 +1102,8 @@ export const ReadingRoomProvider: React.FC<{ children: ReactNode }> = ({ childre
         vacateSeat,
         setSeatStatus,
         addSeat,
+        deleteSeat,
+        adjustSeatCount,
         savePlan,
         togglePlanStatus,
         collectFee,

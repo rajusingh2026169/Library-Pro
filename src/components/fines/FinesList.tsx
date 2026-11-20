@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import {
   Receipt,
   Search,
-  DollarSign,
+  IndianRupee,
   Printer,
   CheckCircle,
   AlertTriangle,

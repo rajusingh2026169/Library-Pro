@@ -93,7 +93,15 @@ export const StorageService = {
   },
 
   getSettings(): LibrarySettings {
-    return getStored<LibrarySettings>(STORAGE_KEYS.SETTINGS, INITIAL_SETTINGS);
+    const stored = getStored<LibrarySettings>(STORAGE_KEYS.SETTINGS, INITIAL_SETTINGS);
+    if (!stored.currencySymbol || stored.currencySymbol === '$' || stored.currency === 'USD') {
+      return {
+        ...stored,
+        currency: 'INR',
+        currencySymbol: '₹',
+      };
+    }
+    return stored;
   },
   saveSettings(settings: LibrarySettings): void {
     setStored(STORAGE_KEYS.SETTINGS, settings);

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react';
 import {
   User,
   onAuthStateChanged,
@@ -13,13 +13,23 @@ import {
 } from 'firebase/auth';
 import { auth, firestore, doc, setDoc, sanitizeForFirestore } from '../services/firebase';
 
+interface SignUpOptions {
+  deferStateUpdate?: boolean;
+}
+
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   error: string | null;
   signInWithGoogle: () => Promise<UserCredential | undefined>;
   signInWithEmail: (email: string, pass: string) => Promise<UserCredential>;
-  signUpWithEmail: (email: string, pass: string, displayName?: string) => Promise<UserCredential>;
+  signUpWithEmail: (
+    email: string,
+    pass: string,
+    displayName?: string,
+    options?: SignUpOptions
+  ) => Promise<UserCredential>;
+  commitAuthUser: () => void;
   sendPasswordReset: (email: string) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
@@ -28,21 +38,37 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const EXPECTED_AUTH_ERROR_CODES = new Set([
+  'auth/invalid-credential',
+  'auth/wrong-password',
+  'auth/user-not-found',
+  'auth/email-already-in-use',
+  'auth/invalid-email',
+  'auth/weak-password',
+  'auth/too-many-requests',
+  'auth/popup-closed-by-user',
+  'auth/cancelled-popup-request',
+  'auth/network-request-failed',
+]);
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const suppressAuthSyncRef = useRef<boolean>(false);
 
   useEffect(() => {
     // Monitor real Firebase Auth state changes
     const unsubscribe = onAuthStateChanged(
       auth,
       (currentUser) => {
-        setUser(currentUser);
+        if (!suppressAuthSyncRef.current) {
+          setUser(currentUser);
+        }
         setLoading(false);
       },
       (authError) => {
-        console.error('Firebase Auth state listener error:', authError);
+        console.warn('Firebase Auth state listener warning:', authError);
         setError(authError.message);
         setLoading(false);
       }
@@ -50,6 +76,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     return () => unsubscribe();
   }, []);
+
+  const commitAuthUser = () => {
+    suppressAuthSyncRef.current = false;
+    setUser(auth.currentUser);
+  };
 
   const getFormattedErrorMessage = (err: any, isHindi: boolean = false): string => {
     const code = err?.code || '';
@@ -63,8 +94,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       case 'auth/invalid-credential':
       case 'auth/wrong-password':
         return isHindi
-          ? 'ईमेल या पासवर्ड अमान्य है। कृपया अपनी क्रेडेंशियल जांचें।'
-          : 'Invalid email or password. Please verify your credentials.';
+          ? 'ईमेल या पासवर्ड अमान्य है। कृपया अपनी क्रेडेंशियल जांचें, नया पुस्तकालय रजिस्टर करें, या पासवर्ड रीसेट करें।'
+          : 'Invalid email or password. Please verify your credentials, register your library, or use Forgot Password.';
       case 'auth/user-not-found':
         return isHindi
           ? 'इस ईमेल से कोई खाता पंजीकृत नहीं है।'
@@ -90,11 +121,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           ? 'नेटवर्क कनेक्शन में समस्या है। कृपया अपना इंटरनेट जांचें।'
           : 'Network error. Please check your internet connection.';
       case 'auth/popup-closed-by-user':
+      case 'auth/cancelled-popup-request':
         return isHindi
           ? 'Google साइन-इन विंडो बंद कर दी गई।'
           : 'Google sign-in popup was closed before completing.';
       default:
         return message || (isHindi ? 'प्रमाणीकरण विफल रहा।' : 'Authentication failed. Please try again.');
+    }
+  };
+
+  const logAuthErrorIfUnexpected = (contextLabel: string, err: any) => {
+    const code = err?.code || '';
+    if (!EXPECTED_AUTH_ERROR_CODES.has(code)) {
+      console.warn(`${contextLabel}:`, err);
     }
   };
 
@@ -107,7 +146,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setUser(cred.user);
       return cred;
     } catch (err: any) {
-      console.error('Google Sign-in error:', err);
+      logAuthErrorIfUnexpected('Google Sign-in warning', err);
       const friendlyMsg = getFormattedErrorMessage(err);
       setError(friendlyMsg);
       throw err;
@@ -139,21 +178,33 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       return cred;
     } catch (err: any) {
-      console.error('Email Sign-in error:', err);
+      logAuthErrorIfUnexpected('Email Sign-in warning', err);
       const friendlyMsg = getFormattedErrorMessage(err);
       setError(friendlyMsg);
       throw err;
     }
   };
 
-  const signUpWithEmail = async (email: string, pass: string, displayName?: string) => {
+  const signUpWithEmail = async (
+    email: string,
+    pass: string,
+    displayName?: string,
+    options?: SignUpOptions
+  ) => {
     setError(null);
+    const deferStateUpdate = Boolean(options?.deferStateUpdate);
+    if (deferStateUpdate) {
+      suppressAuthSyncRef.current = true;
+    }
+
     try {
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
       if (displayName && cred.user) {
         await updateProfile(cred.user, { displayName });
       }
-      setUser(cred.user);
+      if (!deferStateUpdate) {
+        setUser(cred.user);
+      }
 
       // Automatically save registered user's email, password record, and metadata into Firestore 'users' collection
       if (cred.user) {
@@ -187,7 +238,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       return cred;
     } catch (err: any) {
-      console.error('Sign-up error:', err);
+      if (deferStateUpdate) {
+        suppressAuthSyncRef.current = false;
+      }
+      logAuthErrorIfUnexpected('Sign-up warning', err);
       const friendlyMsg = getFormattedErrorMessage(err);
       setError(friendlyMsg);
       throw err;
@@ -199,7 +253,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       await sendPasswordResetEmail(auth, email.trim());
     } catch (err: any) {
-      console.error('Password reset error:', err);
+      logAuthErrorIfUnexpected('Password reset warning', err);
       const friendlyMsg = getFormattedErrorMessage(err);
       setError(friendlyMsg);
       throw err;
@@ -208,11 +262,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const logout = async () => {
     setError(null);
+    suppressAuthSyncRef.current = false;
     try {
       await firebaseSignOut(auth);
       setUser(null);
     } catch (err: any) {
-      console.error('Logout error:', err);
+      console.warn('Logout warning:', err);
       setError(err.message || 'Failed to sign out');
       throw err;
     }
@@ -229,6 +284,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         signInWithGoogle,
         signInWithEmail,
         signUpWithEmail,
+        commitAuthUser,
         sendPasswordReset,
         logout,
         clearError,

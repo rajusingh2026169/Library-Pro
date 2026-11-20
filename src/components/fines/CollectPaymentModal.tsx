@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Modal } from '../common/Modal';
 import { FineRecord, PaymentMethod } from '../../types';
 import { useApp } from '../../context/AppContext';
-import { DollarSign, Receipt, CreditCard } from 'lucide-react';
+import { IndianRupee, Receipt, CreditCard } from 'lucide-react';
 
 interface CollectPaymentModalProps {
   isOpen: boolean;

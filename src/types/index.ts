@@ -230,6 +230,7 @@ export interface LibraryTenant {
   status: LibraryStatus;
   maxSeats: number;
   maxBooks: number;
+  seatCapacityConfigured?: boolean;
   createdAt: string;
   updatedAt: string;
   suspendedReason?: string;

@@ -219,7 +219,7 @@ export const MembersList: React.FC<MembersListProps> = ({
                           </span>
                         ) : (
                           <span className="text-slate-400 font-mono text-xs">
-                            {isHindi ? 'कोई जुर्माना नहीं (₹0)' : 'None ($0.00)'}
+                            {isHindi ? 'कोई जुर्माना नहीं (₹0)' : `None (${settings.currencySymbol || '₹'}0.00)`}
                           </span>
                         )}
                       </td>

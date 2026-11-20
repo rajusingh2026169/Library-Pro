@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Settings,
   Save,
@@ -21,6 +21,10 @@ export const SettingsView: React.FC = () => {
 
   const [form, setForm] = useState<LibrarySettings>({ ...settings });
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setForm({ ...settings });
+  }, [settings]);
 
   const handleChange = (field: keyof LibrarySettings, value: any) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -262,7 +266,7 @@ export const SettingsView: React.FC = () => {
                 type="text"
                 value={form.currencySymbol}
                 onChange={(e) => handleChange('currencySymbol', e.target.value)}
-                placeholder="$"
+                placeholder="₹"
                 className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-300 focus:border-indigo-500 font-mono font-bold"
               />
             </div>
@@ -275,7 +279,7 @@ export const SettingsView: React.FC = () => {
                 type="text"
                 value={form.currency}
                 onChange={(e) => handleChange('currency', e.target.value)}
-                placeholder="USD"
+                placeholder="INR"
                 className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-300 focus:border-indigo-500 uppercase font-mono"
               />
             </div>
